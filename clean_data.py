@@ -32,12 +32,11 @@ def clean_price(df: pd.DataFrame) -> pd.DataFrame:
     n = len(df)
 
     if "price_usd" not in df.columns:
-        df["price_usd"] = (
+        df["price_usd"] = pd.to_numeric(
             df["price"].astype(str)
             .str.replace(r"[\$,]", "", regex=True)
-            .str.strip()
-            .replace("", np.nan)
-            .astype(float)
+            .str.strip(),
+            errors="coerce",
         )
 
     # drop missing / zero

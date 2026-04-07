@@ -1,14 +1,9 @@
-import argparse
 import io
-import math
-import os
-import time
 import warnings
 from pathlib import Path
 
 import pandas as pd
 import requests
-from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -16,9 +11,9 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 INSIDE_AIRBNB_URLS = {
-    "nyc": "http://data.insideairbnb.com/united-states/ny/new-york-city/2024-09-04/data/listings.csv.gz",
-    "la":  "http://data.insideairbnb.com/united-states/ca/los-angeles/2024-09-12/data/listings.csv.gz",
-    "chi": "http://data.insideairbnb.com/united-states/il/chicago/2024-09-15/data/listings.csv.gz",
+    "nyc": "https://data.insideairbnb.com/united-states/ny/new-york-city/2025-09-01/data/listings.csv.gz",
+    "la":  "https://data.insideairbnb.com/united-states/ca/los-angeles/2025-09-01/data/listings.csv.gz",
+    "chi": "https://data.insideairbnb.com/united-states/il/chicago/2025-09-22/data/listings.csv.gz",
 }
 
 KEEP_COLS = [
@@ -67,34 +62,18 @@ def download_city(city: str, url: str) -> pd.DataFrame:
             print(f"    Saved {len(df):,} rows → {cache_path}")
             return df
 
-    try:
-        resp = requests.get(
-            url,
-            timeout=120,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/124.0.0.0 Safari/537.36",
-                "Referer": "https://insideairbnb.com/",
-            },
-        )
-        resp.raise_for_status()
-    except requests.exceptions.HTTPError as exc:
-        if exc.response is not None and exc.response.status_code == 403:
-            raise SystemExit(
-                f"\n[ERROR] 403 Forbidden for {city}.\n"
-                "Inside Airbnb now blocks automated downloads.\n\n"
-                "Manual fix (takes ~2 minutes):\n"
-                "  1. Open https://insideairbnb.com/get-the-data/ in your browser\n"
-                f"  2. Find the most recent '{city.upper()}' listing and download listings.csv.gz\n"
-                f"  3. Rename it to  data/{city}_listings.csv.gz\n"
-                "  4. Re-run this script.\n\n"
-                "City → expected filename mapping:\n"
-                "  nyc  →  data/nyc_listings.csv.gz\n"
-                "  la   →  data/la_listings.csv.gz\n"
-                "  chi  →  data/chi_listings.csv.gz\n"
-            ) from exc
-        raise
+    print(f"  [{city}] Downloading {url}…")
+    resp = requests.get(
+        url,
+        timeout=120,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://insideairbnb.com/",
+        },
+    )
+    resp.raise_for_status()
 
     df = pd.read_csv(
         io.BytesIO(resp.content),
@@ -110,7 +89,7 @@ def download_city(city: str, url: str) -> pd.DataFrame:
     df = df[present].copy()
 
     df["city"] = city
-    df.to_parquet(cache_path, index=False)
+    df.to_csv(cache_path, index=False)
     print(f"    Saved {len(df):,} rows → {cache_path}")
     return df
 
@@ -127,24 +106,6 @@ def load_all_airbnb() -> pd.DataFrame:
     print(f"\n  Combined: {len(combined):,} listings across {combined['city'].nunique()} cities")
     return combined
 
-def clean_price(series: pd.Series) -> pd.Series:
-    """Strip '$' and ',' then cast to float."""
-    return (
-        series.astype(str)
-        .str.replace(r"[\$,]", "", regex=True)
-        .str.strip()
-        .replace("", float("nan"))
-        .astype(float)
-    )
-
-def basic_clean(df: pd.DataFrame) -> pd.DataFrame:
-    df["price_usd"] = clean_price(df["price"])
-    before = len(df)
-    df = df[df["price_usd"].notna() & (df["price_usd"] > 0) & (df["price_usd"] <= 10_000)]
-    print(f"  Dropped {before - len(df):,} rows (no price / price ≤ 0 / price > $10k)")
-    print(f"  Remaining: {len(df):,} listings")
-    df = df.reset_index(drop=True)
-    return df
 
 def save_combined(df: pd.DataFrame):
     out = DATA_DIR / "airbnb_combined.parquet"
@@ -158,10 +119,6 @@ def main():
 
     # --- Inside Airbnb ---
     df = load_all_airbnb()
-
-    # --- Basic clean ---
-    df = basic_clean(df)
-
     # --- Save ---
     save_combined(df)
 
