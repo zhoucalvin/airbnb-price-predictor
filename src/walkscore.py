@@ -25,6 +25,7 @@ import pandas as pd
 import polars as pl
 import requests
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -188,7 +189,8 @@ def collect(
     fetched = 0
     errors = 0
 
-    for row in remaining.iter_rows(named=True):
+    total = min(len(remaining), daily_limit)
+    for row in tqdm(remaining.iter_rows(named=True), total=total, unit="coord"):
         if fetched >= daily_limit:
             print(f"Daily limit of {daily_limit} reached. Re-run tomorrow.")
             break
@@ -205,7 +207,6 @@ def collect(
                 # Flush to disk periodically so progress isn't lost on crash
                 _flush(rows, cache, out_path)
                 rows = []
-                print(f"  fetched {fetched:,} / {min(len(remaining), daily_limit):,}")
 
             time.sleep(delay)
 
