@@ -190,32 +190,44 @@ def collect(
     errors = 0
 
     total = min(len(remaining), daily_limit)
-    for row in tqdm(remaining.iter_rows(named=True), total=total, unit="coord"):
-        if fetched >= daily_limit:
-            print(f"Daily limit of {daily_limit} reached. Re-run tomorrow.")
-            break
-
-        lat = row["snapped_lat"]
-        lon = row["snapped_lon"]
-
-        try:
-            result = fetch_scores(lat, lon, api_key)
-            rows.append(result)
-            fetched += 1
-
-            if fetched % 100 == 0:
-                # Flush to disk periodically so progress isn't lost on crash
-                _flush(rows, cache, out_path)
-                rows = []
-
-            time.sleep(delay)
-
-        except Exception as exc:  # noqa: BLE001
-            errors += 1
-            print(f"  [WARN] ({lat}, {lon}): {exc}")
-            if errors > 50:
-                print("Too many errors, aborting.")
+    try:
+        for row in tqdm(remaining.iter_rows(named=True), total=total, unit="coord"):
+            if fetched >= daily_limit:
+                print(f"Daily limit of {daily_limit} reached. Re-run tomorrow.")
                 break
+
+            lat = row["snapped_lat"]
+            lon = row["snapped_lon"]
+
+            try:
+                result = fetch_scores(lat, lon, api_key)
+                rows.append(result)
+                fetched += 1
+
+                if fetched % 100 == 0:
+                    # Flush to disk periodically so progress isn't lost on crash
+                    _flush(rows, cache, out_path)
+                    rows = []
+
+                time.sleep(delay)
+
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 429:
+                    print(f"\n[RATE LIMIT] Daily quota hit after {fetched} requests. Re-run tomorrow.")
+                    break
+                errors += 1
+                if errors > 5:
+                    print(f"\n[ERROR] Too many failures, aborting after {fetched} fetched.")
+                    break
+
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                if errors > 5:
+                    print(f"\n[ERROR] Too many failures, aborting after {fetched} fetched.")
+                    break
+
+    except KeyboardInterrupt:
+        print(f"\n[INTERRUPTED] Saving progress ({fetched} fetched)…")
 
     # Final flush
     if rows:
