@@ -205,8 +205,9 @@ def collect(
                 fetched += 1
 
                 if fetched % 100 == 0:
-                    # Flush to disk periodically so progress isn't lost on crash
+                    # Flush to disk and reload so next flush includes all rows
                     _flush(rows, cache, out_path)
+                    cache = load_cache(out_path)
                     rows = []
 
                 time.sleep(delay)
