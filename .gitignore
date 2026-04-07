@@ -7,3 +7,6 @@
 *.csv.gz
 data/*_raw.csv
 data/airbnb_combined.parquet
+
+# logs dir for background walk score fetching
+logs/
