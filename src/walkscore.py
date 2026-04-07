@@ -4,14 +4,16 @@ Walk Score API data collection.
 Strategy (per proposal):
 - Snap each listing's lat/lon to a ~110m grid to deduplicate coordinates
 - Fetch walk/transit/bike scores from the Walk Score API (5,000 req/day limit)
-- Cache all results to data/raw/walkscore/walkscore_cache.parquet so the API
+- Cache all results to data/walkscore_cache.parquet so the API
   is never hit twice for the same snapped coordinate
 - Already-cached coordinates are skipped on re-runs
 
 Usage:
-    python src/walkscore.py --listings data/raw/listings \
-                            --out data/raw/walkscore/walkscore_cache.parquet \
+    python src/walkscore.py [--listings data/airbnb_cleaned.parquet] \
+                            [--out data/walkscore_cache.parquet] \
                             [--daily-limit 4900] [--dry-run]
+
+    Run collect_data.py then clean_data.py before this script.
 """
 
 import argparse
@@ -129,35 +131,21 @@ def save_cache(df: pl.DataFrame, path: Path) -> None:
 CITIES = ["nyc", "la", "chicago"]
 
 
-def load_listings(listings_dir: Path) -> pl.DataFrame:
+def load_listings(cleaned_path: Path) -> pl.DataFrame:
     """
-    Read all listings CSVs from listings_dir
-
-    Expects files named like nyc_listings.csv / la_listings.csv, etc.,
-    or any CSV that contains latitude and longitude columns
+    Read latitude/longitude from the cleaned parquet produced by clean_data.py
     """
-    frames = []
-    for csv_path in sorted(listings_dir.glob("*.csv")):
-        df = pl.read_csv(
-            csv_path,
-            columns=["latitude", "longitude"],
-            infer_schema_length=10_000,
-        )
-        frames.append(df)
-
-    if not frames:
+    if not cleaned_path.exists():
         raise FileNotFoundError(
-            f"No CSV files found in {listings_dir}. "
-            "Download Inside Airbnb listings first."
+            f"{cleaned_path} not found. Run clean_data.py first."
         )
-
-    return pl.concat(frames, how="diagonal")
+    return pl.read_parquet(cleaned_path, columns=["latitude", "longitude"])
 
 
 ## Main collection loop ##
 
 def collect(
-    listings_dir: Path,
+    listings_path: Path,
     out_path: Path,
     api_key: str,
     daily_limit: int = 4900,
@@ -171,7 +159,7 @@ def collect(
     continue building up the cache
     """
     print("Loading listings…")
-    listings = load_listings(listings_dir)
+    listings = load_listings(listings_path)
     print(f"  {len(listings):,} total listing rows across all cities")
 
     unique_coords = snapped_coords(listings)
@@ -262,13 +250,13 @@ def main() -> None:
     parser.add_argument(
         "--listings",
         type=Path,
-        default=Path("data/raw/listings"),
-        help="Directory containing Inside Airbnb listings CSVs",
+        default=Path("data/airbnb_cleaned.parquet"),
+        help="Path to cleaned listings parquet (output of clean_data.py)",
     )
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/raw/walkscore/walkscore_cache.parquet"),
+        default=Path("data/walkscore_cache.parquet"),
         help="Output parquet cache path",
     )
     parser.add_argument(
@@ -301,7 +289,7 @@ def main() -> None:
         )
 
     collect(
-        listings_dir=args.listings,
+        listings_path=args.listings,
         out_path=args.out,
         api_key=args.api_key,
         daily_limit=args.daily_limit,
