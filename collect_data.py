@@ -147,8 +147,8 @@ def basic_clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def save_combined(df: pd.DataFrame):
-    out = DATA_DIR / "airbnb_combined.csv"
-    df.to_csv(out, index=False)
+    out = DATA_DIR / "airbnb_combined.parquet"
+    df.to_parquet(out, index=False)
     print(f"\n  ✓ Final dataset saved → {out}  ({len(df):,} rows × {len(df.columns)} columns)")
     print(f"    Columns: {list(df.columns)}")
 
