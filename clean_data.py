@@ -9,8 +9,8 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 DATA_DIR = Path("data")
-INPUT_PATH  = DATA_DIR / "airbnb_combined.parquet"
-OUTPUT_PATH = DATA_DIR / "airbnb_cleaned.parquet"
+INPUT_PATH  = DATA_DIR / "airbnb_combined.csv"
+OUTPUT_PATH = DATA_DIR / "airbnb_cleaned.csv"
 
 
 # helpers
@@ -23,7 +23,10 @@ def report(label: str, df: pd.DataFrame, prev_len: int) -> int:
 # load data
 
 def load(path: Path) -> pd.DataFrame:
-    df = pd.read_parquet(path)
+    if path.suffix == ".parquet":
+        df = pd.read_parquet(path)
+    else:
+        df = pd.read_csv(path, low_memory=False)
     return df
 
 # clean the price
@@ -276,7 +279,7 @@ def main():
 
     print_summary(df)
 
-    df.to_parquet(OUTPUT_PATH, index=False)
+    df.to_csv(OUTPUT_PATH, index=False)
     print(f"\n✓  Cleaned data saved → {OUTPUT_PATH}")
 
 
