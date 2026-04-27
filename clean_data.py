@@ -9,8 +9,8 @@ import pandas as pd
 warnings.filterwarnings("ignore")
 
 DATA_DIR = Path("data")
-INPUT_PATH  = DATA_DIR / "airbnb_combined.csv"
-OUTPUT_PATH = DATA_DIR / "airbnb_cleaned.csv"
+INPUT_PATH  = DATA_DIR / "airbnb_combined.parquet"
+OUTPUT_PATH = DATA_DIR / "airbnb_cleaned.parquet"
 
 
 # helpers
@@ -279,7 +279,7 @@ def main():
 
     print_summary(df)
 
-    df.to_csv(OUTPUT_PATH, index=False)
+    df.to_parquet(OUTPUT_PATH, index=False)
     print(f"\n✓  Cleaned data saved → {OUTPUT_PATH}")
 
 
