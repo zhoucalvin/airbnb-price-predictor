@@ -13,4 +13,3 @@ logs/
 
 # large trained model files
 models/rf_model.pkl
-models/xgb_model.pkl
