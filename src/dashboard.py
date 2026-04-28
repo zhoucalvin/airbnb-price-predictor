@@ -37,12 +37,16 @@ print(f"  Loaded {len(df):,} listings")
 
 print("Loading models...")
 ridge_data = pickle.load(open(MODELS_DIR / "ridge_model_ridgecv.pkl", "rb"))
-rf_data    = pickle.load(open(MODELS_DIR / "rf_model.pkl",    "rb"))
 xgb_data   = pickle.load(open(MODELS_DIR / "xgb_model.pkl",  "rb"))
+
+rf_pkl = MODELS_DIR / "rf_model.pkl"
+rf_data = pickle.load(open(rf_pkl, "rb")) if rf_pkl.exists() else None
+if rf_data is None:
+    print("  WARNING: rf_model.pkl not found — RF predictions and importance chart will be unavailable.")
 
 # Support both old format (bare pipeline) and new format (dict with pipeline key)
 ridge_pipe = ridge_data if not isinstance(ridge_data, dict) else ridge_data.get("pipeline", ridge_data)
-rf_pipe    = rf_data["pipeline"]
+rf_pipe    = rf_data["pipeline"] if rf_data else None
 xgb_pipe   = xgb_data["pipeline"]
 
 # Ridge was saved as a bare pipeline — extract its expected feature columns
@@ -51,7 +55,6 @@ print("  Models loaded.")
 
 # Pre-compute feature importance data (no retraining needed)
 def _clean_feature_name(name):
-    """Make feature names readable for charts."""
     if name.startswith("pca_amenity_"):
         n = int(name.split("_")[-1])
         return f"Amenity Factor {n+1}"
@@ -65,12 +68,15 @@ _shap_df    = pd.DataFrame({"feature": _shap_names, "importance": _shap_mean}) \
                 .sort_values("importance", ascending=False).head(20) \
                 .sort_values("importance")
 
-# RF impurity-based feature importance (top 20)
-_rf_imp    = rf_data["pipeline"].named_steps["rf"].feature_importances_
-_rf_names  = [_clean_feature_name(n) for n in rf_data["feature_names"]]
-_rf_df     = pd.DataFrame({"feature": _rf_names, "importance": _rf_imp}) \
-               .sort_values("importance", ascending=False).head(20) \
-               .sort_values("importance")
+# RF impurity-based feature importance (top 20) — only if model is available
+if rf_data:
+    _rf_imp   = rf_data["pipeline"].named_steps["rf"].feature_importances_
+    _rf_names = [_clean_feature_name(n) for n in rf_data["feature_names"]]
+    _rf_df    = pd.DataFrame({"feature": _rf_names, "importance": _rf_imp}) \
+                  .sort_values("importance", ascending=False).head(20) \
+                  .sort_values("importance")
+else:
+    _rf_df = None
 
 CITY_LABELS  = {"nyc": "New York City", "la": "Los Angeles", "chi": "Chicago"}
 CITY_COLORS  = {"nyc": "#E07B54", "la": "#16A085", "chi": "#2980B9"}
@@ -95,7 +101,7 @@ def get_metrics(pipe, X_test, y_test):
         return {"RMSE (log)": "-", "MAE (log)": "-", "R²": "-", "RMSE (USD)": "-"}
 
 ridge_metrics = get_metrics(ridge_pipe, X_test_raw, y_test)
-rf_metrics    = get_metrics(rf_pipe,    X_test_raw[rf_data["NUMERIC_COLS"] + rf_data["CATEGORICAL_COLS"]], y_test)
+rf_metrics    = get_metrics(rf_pipe, X_test_raw[rf_data["NUMERIC_COLS"] + rf_data["CATEGORICAL_COLS"]], y_test) if rf_data else {"RMSE (log)": "—", "MAE (log)": "—", "R²": "—", "RMSE (USD)": "—"}
 xgb_metrics   = get_metrics(xgb_pipe,  X_test_raw[xgb_data["NUMERIC_COLS"] + xgb_data["CATEGORICAL_COLS"]], y_test)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -441,12 +447,15 @@ def predict_price(n_clicks, city, neighbourhood, room_type, bedrooms, bathrooms,
     ridge_row = {c: row.get(c, 0) for c in ridge_feature_cols}
     X_ridge   = pd.DataFrame([ridge_row])[ridge_feature_cols]
 
+    model_inputs = [
+        ("Ridge",   ridge_pipe, X_ridge),
+        ("XGBoost", xgb_pipe,   pd.DataFrame([row])[xgb_data["NUMERIC_COLS"] + xgb_data["CATEGORICAL_COLS"]]),
+    ]
+    if rf_data:
+        model_inputs.insert(1, ("Random Forest", rf_pipe, pd.DataFrame([row])[rf_data["NUMERIC_COLS"] + rf_data["CATEGORICAL_COLS"]]))
+
     preds = {}
-    for name, pipe, X_in in [
-        ("Ridge",         ridge_pipe, X_ridge),
-        ("Random Forest", rf_pipe,    pd.DataFrame([row])[rf_data["NUMERIC_COLS"] + rf_data["CATEGORICAL_COLS"]]),
-        ("XGBoost",       xgb_pipe,   pd.DataFrame([row])[xgb_data["NUMERIC_COLS"] + xgb_data["CATEGORICAL_COLS"]]),
-    ]:
+    for name, pipe, X_in in model_inputs:
         try:
             log_pred = pipe.predict(X_in)[0]
             preds[name] = np.exp(log_pred)
@@ -731,15 +740,20 @@ def render_models():
     shap_fig.update_layout(showlegend=False, font=chart_font, title_font=title_font,
                            margin={"l": 0, "r": 8, "t": 44, "b": 0})
 
-    rf_imp_fig = px.bar(
-        _rf_df, x="importance", y="feature", orientation="h",
-        title="Feature Importance - Random Forest (Top 20)",
-        labels={"importance": "Impurity-based Importance", "feature": ""},
-        template=PLOTLY_TPL, color_discrete_sequence=[CITY_COLORS["la"]],
-        height=480,
-    )
-    rf_imp_fig.update_layout(showlegend=False, font=chart_font, title_font=title_font,
-                             margin={"l": 0, "r": 8, "t": 44, "b": 0})
+    if _rf_df is not None:
+        rf_imp_fig = px.bar(
+            _rf_df, x="importance", y="feature", orientation="h",
+            title="Feature Importance — Random Forest (Top 20)",
+            labels={"importance": "Impurity-based Importance", "feature": ""},
+            template=PLOTLY_TPL, color_discrete_sequence=[CITY_COLORS["la"]],
+            height=480,
+        )
+        rf_imp_fig.update_layout(showlegend=False, font=chart_font, title_font=title_font,
+                                 margin={"l": 0, "r": 8, "t": 44, "b": 0})
+        rf_imp_content = dcc.Graph(figure=rf_imp_fig, config={"displayModeBar": False})
+    else:
+        rf_imp_content = html.Div("Run src/random_forest.ipynb to generate this chart.",
+                                  style={"color": C_MUTED, "fontStyle": "italic", "fontSize": "13px", "padding": "24px 0"})
 
     return html.Div([
         html.Div(style=CARD, children=[
@@ -760,8 +774,8 @@ def render_models():
                        style={"fontSize": "12px", "color": C_MUTED, "marginTop": "8px", "marginBottom": 0, "fontFamily": FONT}),
             ]),
             html.Div(style=CARD, children=[
-                dcc.Graph(figure=rf_imp_fig, config={"displayModeBar": False}),
-                html.P("Impurity-based importance - average reduction in node impurity from splits on each feature across all trees. 'Amenity Factor N' = PCA component of 191 binary amenity dummies.",
+                rf_imp_content,
+                html.P("Impurity-based importance — average reduction in node impurity from splits on each feature across all trees. 'Amenity Factor N' = PCA component of 191 binary amenity dummies.",
                        style={"fontSize": "12px", "color": C_MUTED, "marginTop": "8px", "marginBottom": 0, "fontFamily": FONT}),
             ]),
         ]),
