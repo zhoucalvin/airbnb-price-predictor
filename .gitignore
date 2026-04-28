@@ -10,3 +10,7 @@ data/airbnb_combined.parquet
 
 # logs dir for background walk score fetching
 logs/
+
+# large trained model files
+models/rf_model.pkl
+models/xgb_model.pkl
