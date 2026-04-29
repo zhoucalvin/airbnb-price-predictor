@@ -42,14 +42,14 @@ xgb_data   = pickle.load(open(MODELS_DIR / "xgb_model.pkl",  "rb"))
 rf_pkl = MODELS_DIR / "rf_model.pkl"
 rf_data = pickle.load(open(rf_pkl, "rb")) if rf_pkl.exists() else None
 if rf_data is None:
-    print("  WARNING: rf_model.pkl not found — RF predictions and importance chart will be unavailable.")
+    print("  WARNING: rf_model.pkl not found - RF predictions and importance chart will be unavailable.")
 
 # Support both old format (bare pipeline) and new format (dict with pipeline key)
 ridge_pipe = ridge_data if not isinstance(ridge_data, dict) else ridge_data.get("pipeline", ridge_data)
 rf_pipe    = rf_data["pipeline"] if rf_data else None
 xgb_pipe   = xgb_data["pipeline"]
 
-# Ridge was saved as a bare pipeline — extract its expected feature columns
+# Ridge was saved as a bare pipeline - extract its expected feature columns
 ridge_feature_cols = list(ridge_pipe.feature_names_in_)
 print("  Models loaded.")
 
@@ -68,7 +68,7 @@ _shap_df    = pd.DataFrame({"feature": _shap_names, "importance": _shap_mean}) \
                 .sort_values("importance", ascending=False).head(20) \
                 .sort_values("importance")
 
-# RF impurity-based feature importance (top 20) — only if model is available
+# RF impurity-based feature importance (top 20) - only if model is available
 if rf_data:
     _rf_imp   = rf_data["pipeline"].named_steps["rf"].feature_importances_
     _rf_names = [_clean_feature_name(n) for n in rf_data["feature_names"]]
@@ -443,7 +443,7 @@ def predict_price(n_clicks, city, neighbourhood, room_type, bedrooms, bathrooms,
             row[col] = 0.0
 
     # Get predictions from all three models
-    # Ridge expects 343 cols (including 191 raw amenity dummies) — fill missing with 0
+    # Ridge expects 343 cols (including 191 raw amenity dummies) - fill missing with 0
     ridge_row = {c: row.get(c, 0) for c in ridge_feature_cols}
     X_ridge   = pd.DataFrame([ridge_row])[ridge_feature_cols]
 
@@ -743,7 +743,7 @@ def render_models():
     if _rf_df is not None:
         rf_imp_fig = px.bar(
             _rf_df, x="importance", y="feature", orientation="h",
-            title="Feature Importance — Random Forest (Top 20)",
+            title="Feature Importance - Random Forest (Top 20)",
             labels={"importance": "Impurity-based Importance", "feature": ""},
             template=PLOTLY_TPL, color_discrete_sequence=[CITY_COLORS["la"]],
             height=480,
@@ -754,6 +754,64 @@ def render_models():
     else:
         rf_imp_content = html.Div("Run src/random_forest.ipynb to generate this chart.",
                                   style={"color": C_MUTED, "fontStyle": "italic", "fontSize": "13px", "padding": "24px 0"})
+
+    # Residual plots
+    city_test = df.loc[y_test.index, "city"].values
+
+    def _residual_fig(pipe, X_in, title, available):
+        if not available:
+            return None
+        try:
+            y_pred = pipe.predict(X_in)
+        except Exception:
+            return None
+        resid_df = pd.DataFrame({
+            "Actual":    y_test.values,
+            "Predicted": y_pred,
+            "Residual":  y_test.values - y_pred,
+            "city":      city_test,
+        })
+        fig = go.Figure()
+        for city_key, city_label in CITY_LABELS.items():
+            sub = resid_df[resid_df["city"] == city_key]
+            fig.add_trace(go.Scatter(
+                x=sub["Predicted"], y=sub["Residual"],
+                mode="markers", name=city_label,
+                marker={"color": CITY_COLORS[city_key], "size": 3, "opacity": 0.4},
+            ))
+        fig.add_hline(y=0, line_dash="dash", line_color="#aaa", line_width=1)
+        fig.update_layout(
+            title=title, template=PLOTLY_TPL,
+            xaxis_title="Predicted log-price", yaxis_title="Residual",
+            font=chart_font, title_font=title_font,
+            legend={"font": {"size": 11}}, height=380,
+            margin={"t": 44, "b": 0},
+        )
+        return fig
+
+    xgb_resid_fig = _residual_fig(
+        xgb_pipe,
+        X_test_raw[xgb_data["NUMERIC_COLS"] + xgb_data["CATEGORICAL_COLS"]],
+        "Residuals - XGBoost",
+        available=True,
+    )
+    rf_resid_fig = _residual_fig(
+        rf_pipe,
+        X_test_raw[rf_data["NUMERIC_COLS"] + rf_data["CATEGORICAL_COLS"]] if rf_data else None,
+        "Residuals - Random Forest",
+        available=rf_data is not None,
+    )
+
+    def _resid_card(fig, caption):
+        if fig is None:
+            return html.Div(style=CARD, children=[
+                html.P("Run src/random_forest.ipynb to generate this chart.",
+                       style={"color": C_MUTED, "fontStyle": "italic", "fontSize": "13px", "padding": "24px 0"}),
+            ])
+        return html.Div(style=CARD, children=[
+            dcc.Graph(figure=fig, config={"displayModeBar": False}),
+            html.P(caption, style={"fontSize": "12px", "color": C_MUTED, "marginTop": "8px", "marginBottom": 0, "fontFamily": FONT}),
+        ])
 
     return html.Div([
         html.Div(style=CARD, children=[
@@ -775,9 +833,13 @@ def render_models():
             ]),
             html.Div(style=CARD, children=[
                 rf_imp_content,
-                html.P("Impurity-based importance — average reduction in node impurity from splits on each feature across all trees. 'Amenity Factor N' = PCA component of 191 binary amenity dummies.",
+                html.P("Impurity-based importance - average reduction in node impurity from splits on each feature across all trees. 'Amenity Factor N' = PCA component of 191 binary amenity dummies.",
                        style={"fontSize": "12px", "color": C_MUTED, "marginTop": "8px", "marginBottom": 0, "fontFamily": FONT}),
             ]),
+        ]),
+        html.Div(style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "16px"}, children=[
+            _resid_card(xgb_resid_fig, "Residuals vs predicted log-price on the held-out test set (12,509 listings). A well-fitted model shows no systematic pattern - residuals should be centred around 0 across the prediction range."),
+            _resid_card(rf_resid_fig,  "Random Forest residuals. The wider spread at higher predicted prices reflects fewer high-priced training examples (luxury listings). Requires rf_model.pkl to display."),
         ]),
     ])
 
